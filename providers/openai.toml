@@ -1,0 +1,109 @@
+# Frozen release declarations, copied into the user's provider directory.
+schema_version = 1
+protocol = "openai-images"
+base_url = "https://api.openai.com/v1"
+source = ["https://platform.openai.com/docs/guides/image-generation"]
+verified = "2026-10-03"
+
+[models."gpt-image-1"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+
+[models."gpt-image-1-mini"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+
+[models."gpt-image-1.5"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+
+[models."gpt-image-2"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+
+[models."gpt-image-2-2026-04-21"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+
+[models."gpt-image-2.5-flare"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "xhigh", "max", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+custom_sizes = { step = 16, max_edge = 3840, max_edge_ratio = 3, min_pixels = 655360, max_pixels = 8294400 }
+
+[models."gpt-image-2.5-flare-2026-09-08"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "xhigh", "max", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+custom_sizes = { step = 16, max_edge = 3840, max_edge_ratio = 3, min_pixels = 655360, max_pixels = 8294400 }
+
+[models."gpt-image-2.5-sunburst"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "xhigh", "max", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+custom_sizes = { step = 16, max_edge = 3840, max_edge_ratio = 3, min_pixels = 655360, max_pixels = 8294400 }
+
+[models."gpt-image-2.5-sunburst-2026-09-08"]
+max_n = 10
+geometry = "pixels"
+sizes = ["1024x1024", "1536x1024", "1024x1536"]
+qualities = ["low", "medium", "high", "xhigh", "max", "auto"]
+default_quality = "auto"
+formats = ["png", "jpeg", "webp"]
+default_format = "png"
+max_prompt_chars = 32000
+default_aspect = "1:1"
+custom_sizes = { step = 16, max_edge = 3840, max_edge_ratio = 3, min_pixels = 655360, max_pixels = 8294400 }

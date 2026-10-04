@@ -1,0 +1,8 @@
+# Template only: declare the models and native geometry your local server serves.
+# Route compatibility with real third-party servers remains unverified.
+schema_version = 1
+protocol = "openai-images"
+base_url = "http://127.0.0.1:8080/v1"
+source = ["https://platform.openai.com/docs/api-reference/images/create"]
+verified = "2026-10-03"
+[models]
