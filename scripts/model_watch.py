@@ -36,7 +36,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, TypeGuard
 
 EXIT_NO_CHANGES = 0
 EXIT_ERROR = 1
@@ -61,6 +61,7 @@ REQUEST_TIMEOUT_SECONDS = 30
 PAGE_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-=.~+/]{1,512}")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 USER_AGENT = "genie-registry-model-watch/1"
+DESCRIPTION = "Weekly vendor model watch for the Genie provider registry."
 TO_VERIFY = "TO VERIFY"
 
 
@@ -232,7 +233,7 @@ def fetch_json(url: str, headers: dict) -> object:
 # --------------------------------------------------------------- validation
 
 
-def valid_model_id(value: object) -> bool:
+def valid_model_id(value: object) -> TypeGuard[str]:
     return (
         isinstance(value, str)
         and 0 < len(value) <= MAX_MODEL_ID_LEN
@@ -591,7 +592,7 @@ def write_candidates(root: Path, results: list[VendorResult]) -> list[Path]:
 
 
 def run(argv: list[str], env: dict | None = None, transport: Transport = fetch_json) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--pr-body", type=Path, help="write the pull request body here")
     parser.add_argument("--summary", type=Path, help="append a markdown job summary here")

@@ -8,6 +8,7 @@ captured from live accounts.
 from __future__ import annotations
 
 import contextlib
+import email.message
 import importlib.util
 import io
 import json
@@ -16,6 +17,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -24,6 +26,7 @@ REPO = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 _spec = importlib.util.spec_from_file_location("model_watch", REPO / "scripts" / "model_watch.py")
+assert _spec is not None and _spec.loader is not None
 mw = importlib.util.module_from_spec(_spec)
 sys.modules["model_watch"] = mw  # dataclasses resolve annotations through sys.modules
 _spec.loader.exec_module(mw)
@@ -438,19 +441,15 @@ class Transport(unittest.TestCase):
 
     def test_http_error_message_carries_status_only(self):
         body = io.BytesIO(("echo " + SENTINEL).encode())
-        error = urllib.error.HTTPError("https://x.example", 401, "Unauthorized", {}, body)
+        error = urllib.error.HTTPError("https://x.example", 401, "Unauthorized", email.message.Message(), body)
 
         class Opener:
             def open(self, request, timeout):
                 raise error
 
-        original = mw._OPENER
-        mw._OPENER = Opener()
-        try:
+        with unittest.mock.patch.object(mw, "_OPENER", Opener()):
             with self.assertRaises(mw.WatchError) as caught:
                 mw.fetch_json("https://api.openai.com/v1/models", {"Authorization": "Bearer " + SENTINEL})
-        finally:
-            mw._OPENER = original
         self.assertEqual(str(caught.exception), "HTTP 401")
         self.assertIsNone(caught.exception.__cause__)
 
@@ -459,20 +458,16 @@ class Transport(unittest.TestCase):
             def __enter__(self):
                 return self
 
-            def __exit__(self, *exc):
-                return False
+            def __exit__(self, *exc) -> None:
+                self.close()
 
         class Opener:
             def open(self, request, timeout):
                 return Response(b"x" * (mw.MAX_RESPONSE_BYTES + 10))
 
-        original = mw._OPENER
-        mw._OPENER = Opener()
-        try:
+        with unittest.mock.patch.object(mw, "_OPENER", Opener()):
             with self.assertRaises(mw.WatchError) as caught:
                 mw.fetch_json("https://api.openai.com/v1/models", {})
-        finally:
-            mw._OPENER = original
         self.assertIn("larger than", str(caught.exception))
 
 
