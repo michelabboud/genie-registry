@@ -58,6 +58,9 @@ MAX_CANDIDATES_PER_VENDOR = 64
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_PAGES = 10
 REQUEST_TIMEOUT_SECONDS = 30
+# A usable API key is visible ASCII only; anything else would be rejected by
+# http.client with an error message that contains the key.
+KEY_RE = re.compile(r"[\x21-\x7e]+")
 PAGE_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-=.~+/]{1,512}")
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 USER_AGENT = "genie-registry-model-watch/1"
@@ -222,11 +225,17 @@ def fetch_json(url: str, headers: dict) -> object:
         raise WatchError(f"protocol error ({type(error).__name__})") from None
     except OSError as error:
         raise WatchError(f"network error ({type(error).__name__})") from None
+    except ValueError:
+        # http.client rejects an invalid header value with a ValueError whose
+        # text contains the whole header, key included. Never let it through.
+        raise WatchError("invalid request") from None
     if len(body) > MAX_RESPONSE_BYTES:
         raise WatchError(f"response larger than {MAX_RESPONSE_BYTES} bytes")
     try:
         return json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (ValueError, RecursionError):
+        # ValueError covers JSONDecodeError, UnicodeDecodeError and integers
+        # past the int-to-str digit limit; RecursionError covers deep nesting.
         raise WatchError("response is not valid JSON") from None
 
 
@@ -371,9 +380,12 @@ def load_registry(root: Path, vendor: Vendor) -> dict:
 
 
 def check_vendor(root: Path, vendor: Vendor, env: dict, transport: Transport) -> VendorResult:
-    key = env.get(vendor.env_key, "")
+    key = env.get(vendor.env_key, "").strip()
     if not key:
         return VendorResult(vendor, "skipped", f"{vendor.env_key} is not set")
+    if not KEY_RE.fullmatch(key):
+        # Name the secret, never its value.
+        return VendorResult(vendor, "error", f"{vendor.env_key} contains invalid characters")
     try:
         document = load_registry(root, vendor)
         listing = PARSERS[vendor.name](vendor, fetch_pages(vendor, key, transport))
@@ -573,8 +585,11 @@ def pr_body(results: list[VendorResult]) -> str:
 
 def write_candidates(root: Path, results: list[VendorResult]) -> list[Path]:
     """Rewrite candidates/ for every checked vendor: a worksheet where there
-    are changes, none where there are not. Skipped or failed vendors keep
-    whatever file they had, because no fresh evidence replaces it."""
+    are changes, none where there are not. Skipped or failed vendors' files
+    are left as they are in this tree, because no fresh evidence replaces
+    them; the workflow carries a skipped vendor's worksheet forward from the
+    existing model-watch/auto branch (a failed vendor fails the run, so
+    nothing is pushed)."""
     directory = root / "candidates"
     written = []
     for result in results:
@@ -620,6 +635,8 @@ def run(argv: list[str], env: dict | None = None, transport: Transport = fetch_j
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as handle:
             handle.write(f"complete={'true' if complete else 'false'}\n")
+            skipped = " ".join(r.vendor.name for r in results if r.status == "skipped")
+            handle.write(f"skipped={skipped}\n")
     for r in errors:
         print(f"model-watch: {r.vendor.display} failed: {r.message}", file=sys.stderr)
     if errors:

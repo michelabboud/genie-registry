@@ -273,7 +273,9 @@ class MissingKeys(WatchCase):
         self.assertIn("`OPENAI_MODELS_KEY` secret is absent", body)
         summary = (self.tmp / "summary.md").read_text(encoding="utf-8")
         self.assertIn("Google Gemini | skipped", summary)
-        self.assertIn("complete=false", (self.tmp / "github-output").read_text())
+        output = (self.tmp / "github-output").read_text()
+        self.assertIn("complete=false", output)
+        self.assertIn("skipped=openai gemini\n", output)
 
     def test_no_keys_at_all_is_no_change_and_incomplete(self):
         code, out, _, transport = self.run_watch({})
@@ -329,7 +331,9 @@ class ChangeDetection(WatchCase):
         self.assertEqual(code, mw.EXIT_NO_CHANGES)
         self.assertFalse((self.tmp / "candidates").exists())
         self.assertFalse((self.tmp / "pr-body.md").exists())
-        self.assertIn("complete=true", (self.tmp / "github-output").read_text())
+        output = (self.tmp / "github-output").read_text()
+        self.assertIn("complete=true", output)
+        self.assertIn("skipped=\n", output)
         self.assertIn("| OpenAI | checked | 0 | 0 | 2 | 0 |", out)
 
     def test_stale_worksheet_is_removed_when_vendor_has_no_changes(self):
@@ -426,6 +430,70 @@ class SecretsNeverAppear(WatchCase):
         routes[mw.VENDORS[0].list_url] = RuntimeError("boom")
         with self.assertRaises(RuntimeError):
             self.run_watch(ALL_KEYS, routes)
+
+
+class KeyHygiene(WatchCase):
+    """A key pasted with stray whitespace or control bytes must never reach a
+    log through http.client's header validation error."""
+
+    def test_real_fetch_json_with_newline_key_never_echoes_it(self):
+        # The real request path; .invalid never resolves, and http.client
+        # validates the header before any connection is attempted.
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            with self.assertRaises(mw.WatchError) as caught:
+                mw.fetch_json("https://models.invalid/v1/models",
+                              {"Authorization": "Bearer " + SENTINEL + "\n"})
+        self.assertNotIn(SENTINEL, str(caught.exception))
+        self.assertIsNone(caught.exception.__cause__)
+        self.assertTrue(caught.exception.__suppress_context__)
+        self.assertNotIn(SENTINEL, stdout.getvalue() + stderr.getvalue())
+
+    def test_run_with_embedded_control_byte_key_refuses_without_network(self):
+        env = {"OPENAI_MODELS_KEY": SENTINEL + "\nX"}
+        stdout, stderr = io.StringIO(), io.StringIO()
+        argv = ["--root", str(self.tmp)]
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = mw.run(argv, env=env)  # the real transport: it must not be reached
+        self.assertEqual(code, mw.EXIT_ERROR)
+        out = stdout.getvalue() + stderr.getvalue()
+        self.assertIn("OPENAI_MODELS_KEY contains invalid characters", out)
+        self.assertNotIn(SENTINEL, out)
+
+    def test_surrounding_whitespace_is_stripped(self):
+        _, _, _, transport = self.run_watch({"OPENAI_MODELS_KEY": "  key-1\r\n"})
+        self.assertEqual(transport.calls[0][1], {"Authorization": "Bearer key-1"})
+
+    def test_whitespace_only_key_counts_as_missing(self):
+        code, out, _, transport = self.run_watch({"OPENAI_MODELS_KEY": " \n"})
+        self.assertEqual(transport.calls, [])
+        self.assertIn("OPENAI_MODELS_KEY is not set", out)
+
+
+class HostileJson(unittest.TestCase):
+    def serve(self, body: bytes):
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc) -> None:
+                self.close()
+
+        class Opener:
+            def open(self, request, timeout):
+                return Response(body)
+
+        return unittest.mock.patch.object(mw, "_OPENER", Opener())
+
+    def test_deep_nesting_is_a_watch_error(self):
+        with self.serve(b"[" * 100_000 + b"]" * 100_000):
+            with self.assertRaises(mw.WatchError):
+                mw.fetch_json("https://api.openai.com/v1/models", {})
+
+    def test_huge_integer_is_a_watch_error(self):
+        with self.serve(b'{"n": ' + b"9" * 5000 + b"}"):
+            with self.assertRaises(mw.WatchError):
+                mw.fetch_json("https://api.openai.com/v1/models", {})
 
 
 class Transport(unittest.TestCase):
