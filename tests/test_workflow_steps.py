@@ -1,7 +1,8 @@
 """Exercises the pull-request job's shell steps from the real workflow file
 against a local bare repository and a stub `gh`: branch creation, no-op
 reruns, the force-with-lease race, foreign commits, skipped-vendor carry
-forward, the empty-commit guard and an ls-remote failure. Needs bash and git.
+forward, the empty-commit guard, an ls-remote failure and symlinks in the
+artifact. Needs bash and git.
 """
 
 from __future__ import annotations
@@ -56,7 +57,7 @@ class WorkflowSteps(unittest.TestCase):
             )
         report = [line for line in result.stdout.splitlines() if line.startswith(("PASS", "FAIL", "failures="))]
         self.assertEqual(result.returncode, 0, "\n".join(report) + "\n" + result.stderr[-2000:])
-        self.assertEqual(sum(line.startswith("PASS") for line in report), 7, "\n".join(report))
+        self.assertEqual(sum(line.startswith("PASS") for line in report), 9, "\n".join(report))
 
 
 if __name__ == "__main__":

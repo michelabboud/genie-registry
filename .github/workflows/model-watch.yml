@@ -158,6 +158,10 @@ jobs:
           set -euo pipefail
           in="$RUNNER_TEMP/watch-in"
           body="$RUNNER_TEMP/pr-body.md"
+          # The artifact is data from the watch job: a symlink is never followed.
+          if [ -L "$in/pr-body.md" ] || [ ! -f "$in/pr-body.md" ]; then
+            echo "::error::the artifact's pr-body.md is not a regular file"; exit 1
+          fi
           cp -- "$in/pr-body.md" "$body"
           git config user.name "github-actions[bot]"
           git config user.email "$BOT_EMAIL"
@@ -176,7 +180,7 @@ jobs:
             case "$vendor" in openai|xai|gemini) ;; *) echo "::error::unexpected vendor name"; exit 1 ;; esac
             if [ -n "$SHA" ] && git cat-file -e "$SHA:candidates/$vendor.md" 2>/dev/null; then
               git show "$SHA:candidates/$vendor.md" > "candidates/$vendor.md"
-              printf '\nCarried forward unchanged (vendor skipped this run): %s\n' "\`candidates/$vendor.md\`" >> "$body"
+              printf '\nCarried forward, may be stale (vendor skipped this run, so not re-checked against providers/): %s\n' "\`candidates/$vendor.md\`" >> "$body"
             fi
           done
           git add -A -- candidates

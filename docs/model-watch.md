@@ -15,7 +15,7 @@ Decided 2026-11-12 by Michel.
 
 ## Decision
 
-A weekly scheduled job lists models through each vendor's documented list endpoint, selects image-capable models, compares them with `providers/*.toml` and writes `candidates/<vendor>.md`. One branch, `model-watch/auto`, is regenerated from `main` on every run and carries at most one open pull request, which is updated rather than duplicated. When nothing differs, no pull request is opened, and an open one is closed once every vendor has been checked and nothing remains. A vendor skipped because its secret is absent keeps the worksheet the branch already had, carried forward from `model-watch/auto`. Signing and publishing stay on Michel's machine through Genie's `scripts/registry_release.py`.
+A weekly scheduled job lists models through each vendor's documented list endpoint, selects image-capable models, compares them with `providers/*.toml` and writes `candidates/<vendor>.md`. One branch, `model-watch/auto`, is regenerated from `main` on every run and carries at most one open pull request, which is updated rather than duplicated. When nothing differs, no pull request is opened, and an open one is closed once every vendor has been checked and nothing remains. A vendor skipped because its secret is absent keeps the worksheet the branch already had, carried forward from `model-watch/auto` and marked in the pull request as possibly stale, because it was not re-checked against `providers/`. Signing and publishing stay on Michel's machine through Genie's `scripts/registry_release.py`.
 
 How each vendor is read (all in `VENDORS` in `scripts/model_watch.py`):
 

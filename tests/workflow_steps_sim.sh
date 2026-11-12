@@ -10,6 +10,9 @@ fresh() { local d; d=$(mktemp -d "$R/case.XXXX"); echo "$d"; }
 setup() {
   C=$(fresh); cd "$C" || exit 1
   git clone -q --bare "$SIM_REPO" origin.git
+  # A bare clone copies only local branches; make sure main exists even when
+  # the checkout running the test has no local main.
+  git -C origin.git update-ref refs/heads/main "$(git -C "$SIM_REPO" rev-parse HEAD)"
   git -C origin.git symbolic-ref HEAD refs/heads/main
   git -C origin.git branch -q -D model-watch/auto 2>/dev/null || true
   git clone -q origin.git work
@@ -76,6 +79,17 @@ branch_step; out=$(open_step 2>&1); rc=$?
 setup; git remote set-url origin "$C/does-not-exist.git"
 out=$(branch_step 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q "ls-remote failed" <<<"$out" && ok "G ls-remote failure fails the step (exit $rc)" || bad "G rc=$rc $out"
+
+# H: symlinks in the artifact are never followed
+setup; artifact openai=real
+ln -s /etc/hostname "$RUNNER_TEMP/watch-in/candidates/xai.md"
+branch_step; open_step >/dev/null 2>&1
+[ "$(remote_file openai)" = real ] && ! remote_file xai >/dev/null && ok "H1 symlinked worksheet not admitted" || bad H1
+setup; artifact openai=real
+mv "$RUNNER_TEMP/watch-in/pr-body.md" "$RUNNER_TEMP/real-body.md"
+ln -s "$RUNNER_TEMP/real-body.md" "$RUNNER_TEMP/watch-in/pr-body.md"
+branch_step; out=$(open_step 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "not a regular file" <<<"$out" && ! git -C "$C/origin.git" rev-parse -q --verify "refs/heads/$WATCH_BRANCH" >/dev/null && ! [ -s "$C/gh.log" ] && ok "H2 symlinked pr-body refused, nothing pushed (exit $rc)" || bad "H2 rc=$rc $out"
 
 echo "failures=$FAILS"
 [ "$FAILS" -eq 0 ]
