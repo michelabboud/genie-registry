@@ -7,3 +7,7 @@ Numeric `registry/<N>` releases contain `registry.toml`, `registry.tar`, and `re
 The first release is `registry/2`, dated 2026-10-04, and requires Genie 0.2.0 or newer. It contains OpenAI, xAI, Gemini, and an empty local OpenAI-compatible template. These declarations are a dated snapshot, not a promise that an account has access or quota. No credentials, profiles, generated images, application source, or signing keys are included.
 
 Production public key: `603d9f069ae7344d58a74f494f5dd64cf03c4fba0632684d6486b063addc6ee3`. Public-key SHA-256: `9cbac704124a6acfc859ea91857d1d0926694b4c9fc460a72f7ff5c5d367e96e`.
+
+## Model watch
+
+A weekly workflow lists each vendor's models and, when they differ from `providers/`, opens one pull request with unverified worksheets under `candidates/`. It never edits `providers/`, never signs and never publishes; a human verifies every value and publishes locally. The design, threat sketch, the secrets to create and the review and publish steps are in [docs/model-watch.md](docs/model-watch.md).

@@ -1,0 +1,16 @@
+{
+  "object": "list",
+  "data": [
+    {"id": "gpt-image-1", "object": "model"},
+    {"id": "gpt-image-evil\nInjected line", "object": "model"},
+    {"id": "gpt-image-**bold**](https://evil.example)", "object": "model"},
+    {"id": "gpt-image-`code`", "object": "model"},
+    {"id": "../../providers/openai", "object": "model"},
+    {"id": "gpt-image-..-up", "object": "model"},
+    {"id": "gpt-image-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", "object": "model"},
+    {"id": "ft:gpt-image-1:org:custom:abc", "object": "model"},
+    {"id": 12345, "object": "model"},
+    {"object": "model"},
+    "not-an-object"
+  ]
+}

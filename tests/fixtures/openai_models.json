@@ -1,0 +1,11 @@
+{
+  "object": "list",
+  "data": [
+    {"id": "gpt-image-1", "object": "model", "created": 1745000000, "owned_by": "system", "shutdown_date": "2027-03-01"},
+    {"id": "gpt-image-2", "object": "model", "created": 1770000000, "owned_by": "system", "shutdown_date": null},
+    {"id": "gpt-image-3", "object": "model", "created": 1790000000, "owned_by": "system", "shutdown_date": null},
+    {"id": "chatgpt-image-latest", "object": "model", "created": 1790000000, "owned_by": "system"},
+    {"id": "gpt-5.5", "object": "model", "created": 1780000000, "owned_by": "system"},
+    {"id": "dall-e-3", "object": "model", "created": 1698785189, "owned_by": "system"}
+  ]
+}

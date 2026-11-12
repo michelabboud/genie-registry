@@ -1,0 +1,133 @@
+# Weekly vendor model watch. Opens or updates ONE pull request with unverified
+# candidate worksheets under candidates/. It never edits providers/, never
+# signs, never creates a release and never pushes to main.
+# Design, threat sketch and review steps: docs/model-watch.md.
+name: model-watch
+
+on:
+  schedule:
+    - cron: "23 6 * * 1" # Mondays 06:23 UTC
+  workflow_dispatch:
+
+# Nothing at workflow level; the one job asks for exactly what it needs.
+permissions: {}
+
+concurrency:
+  group: model-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # push the model-watch/auto branch
+      pull-requests: write # open, update or close its pull request
+    env:
+      WATCH_BRANCH: model-watch/auto
+      BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+    steps:
+      - name: Check out main
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          # The token is not left in .git/config, so the step that handles
+          # vendor responses never has push credentials on disk.
+          persist-credentials: false
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Watch vendor model lists
+        id: watch
+        env:
+          OPENAI_MODELS_KEY: ${{ secrets.OPENAI_MODELS_KEY }}
+          XAI_MODELS_KEY: ${{ secrets.XAI_MODELS_KEY }}
+          GEMINI_MODELS_KEY: ${{ secrets.GEMINI_MODELS_KEY }}
+        run: |
+          set +e
+          python3 scripts/model_watch.py --root . \
+            --pr-body "$RUNNER_TEMP/model-watch-pr.md" \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --github-output "$GITHUB_OUTPUT"
+          code=$?
+          set -e
+          case "$code" in
+            0) echo "result=none" >> "$GITHUB_OUTPUT" ;;
+            3) echo "result=changes" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::model watch failed (exit $code); see the log above"; exit "$code" ;;
+          esac
+
+      - name: Find the watch branch and its pull request
+        id: branch
+        if: steps.watch.outputs.result == 'changes' || steps.watch.outputs.complete == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          exists=false
+          foreign=false
+          if git ls-remote --exit-code --heads origin "$WATCH_BRANCH" >/dev/null; then
+            exists=true
+            git fetch --no-tags origin "+refs/heads/$WATCH_BRANCH:refs/remotes/origin/$WATCH_BRANCH"
+            # A human commit on the bot branch is never overwritten or closed.
+            authors=$(git log --format='%ae' "origin/main..origin/$WATCH_BRANCH")
+            if [ -n "$authors" ] && printf '%s\n' "$authors" | grep -Fvxq "$BOT_EMAIL"; then
+              foreign=true
+              echo "::warning::$WATCH_BRANCH carries commits not made by the watch; leaving it untouched"
+              echo "The watch branch has commits by someone other than the watch, so it was left untouched." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$WATCH_BRANCH" --base main --state open \
+                 --json number --jq '.[0].number // empty')
+          {
+            echo "exists=$exists"
+            echo "foreign=$foreign"
+            echo "pr=$pr"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the pull request
+        if: steps.watch.outputs.result == 'changes' && steps.branch.outputs.foreign == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXISTS: ${{ steps.branch.outputs.exists }}
+          PR: ${{ steps.branch.outputs.pr }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "$BOT_EMAIL"
+          gh auth setup-git
+          git checkout -B "$WATCH_BRANCH"
+          git add -A -- candidates
+          git commit -m "candidates: weekly model watch $(date -u +%F)" \
+                     -m "Unverified worksheets only; providers/ is not modified."
+          if [ "$EXISTS" = true ] && git diff --quiet "origin/$WATCH_BRANCH" HEAD -- candidates; then
+            echo "Candidates unchanged since the last run; branch not pushed."
+          else
+            # The watch owns this branch and regenerates it from main every run.
+            git push --force origin "HEAD:refs/heads/$WATCH_BRANCH"
+          fi
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/model-watch-pr.md"
+            echo "Updated pull request #$PR." >> "$GITHUB_STEP_SUMMARY"
+          elif ! gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$WATCH_BRANCH" \
+                 --title "Model watch: vendor model changes to verify" \
+                 --body-file "$RUNNER_TEMP/model-watch-pr.md"; then
+            echo "::error::Pull request creation was refused. Enable Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests' (docs/model-watch.md). The branch $WATCH_BRANCH was pushed."
+            exit 1
+          fi
+
+      - name: Close a pull request that no longer applies
+        if: >-
+          steps.watch.outputs.result == 'none' && steps.watch.outputs.complete == 'true'
+          && steps.branch.outputs.foreign == 'false' && steps.branch.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.branch.outputs.pr }}
+        run: |
+          set -euo pipefail
+          gh pr close "$PR" --repo "$GITHUB_REPOSITORY" \
+            --comment "Every vendor was checked and nothing differs from providers/ any more, so this pull request no longer applies. The branch is kept."
+          echo "Closed pull request #$PR: nothing left to verify." >> "$GITHUB_STEP_SUMMARY"

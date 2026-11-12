@@ -1,0 +1,16 @@
+{
+  "models": [
+    {
+      "name": "models/gemini-3.5-flash-image",
+      "baseModelId": "gemini-3.5-flash-image",
+      "version": "3.5",
+      "supportedGenerationMethods": ["generateContent", "countTokens"]
+    },
+    {
+      "name": "models/gemini-3.5-flash-image-embed",
+      "baseModelId": "gemini-3.5-flash-image-embed",
+      "version": "3.5",
+      "supportedGenerationMethods": ["embedContent"]
+    }
+  ]
+}
