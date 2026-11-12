@@ -8,14 +8,14 @@ Decided 2026-11-12 by Michel.
 
 1. **Signing key.** The Ed25519 production key never enters CI: the workflow has no secret for it, creates no release and never pushes to `main`. A compromised workflow can at worst open a misleading pull request.
 2. **Unverified data.** Everything in a watch pull request is unverified until a human checks it. Every proposed value is marked `TO VERIFY` with the doc URL to check, and the watch never edits `providers/`, so an unchecked value cannot reach a signed release by merging alone.
-3. **Vendor keys.** The three keys can only list models: OpenAI's is a restricted key with Models read and nothing else; the xAI and Google keys sit on accounts with low spending caps. They travel only in request headers, are never printed, and live only in the step that calls the vendors.
+3. **Vendor keys.** The three keys can only list models: OpenAI's is a restricted key with Models read and nothing else; the xAI and Google keys sit on accounts with low spending caps. They travel only in request headers, are never printed, and exist only in the read-only job. A key is stripped of surrounding whitespace and refused, by secret name only, if it holds anything but visible ASCII, so a copy-paste slip cannot make Python echo it in an error in this public repository's logs.
 4. **Fork pull requests.** The workflow has no `pull_request` or `pull_request_target` trigger, so a fork cannot run it or reach its secrets.
 5. **Hostile vendor responses.** Model ids must match `[A-Za-z0-9][A-Za-z0-9._-]*` with no `..`, at most 100 characters; anything else is dropped and counted, never pasted. Listings are bounded (4 MiB, 2,000 entries, 10 pages) and redirects are refused so a key is not replayed to another host.
-6. **Token scope.** The workflow token has `contents: write` and `pull-requests: write` on the one job and nothing else. The push credentials are not written to disk while vendor data is handled (`persist-credentials: false`).
+6. **Token scope.** Two jobs. `watch` holds the vendor keys and a read-only token, runs the script and uploads `candidates/` as an artifact. `pull-request` holds `contents: write` and `pull-requests: write`, has no vendor keys, runs no vendor-facing code, and admits only the three known worksheet names from the artifact. The push is `--force-with-lease`, so it never overwrites a branch someone moved after the job read it.
 
 ## Decision
 
-A weekly scheduled job lists models through each vendor's documented list endpoint, selects image-capable models, compares them with `providers/*.toml` and writes `candidates/<vendor>.md`. One branch, `model-watch/auto`, is regenerated from `main` on every run and carries at most one open pull request, which is updated rather than duplicated. When nothing differs, no pull request is opened, and an open one is closed once every vendor has been checked and nothing remains. Signing and publishing stay on Michel's machine through Genie's `scripts/registry_release.py`.
+A weekly scheduled job lists models through each vendor's documented list endpoint, selects image-capable models, compares them with `providers/*.toml` and writes `candidates/<vendor>.md`. One branch, `model-watch/auto`, is regenerated from `main` on every run and carries at most one open pull request, which is updated rather than duplicated. When nothing differs, no pull request is opened, and an open one is closed once every vendor has been checked and nothing remains. A vendor skipped because its secret is absent keeps the worksheet the branch already had, carried forward from `model-watch/auto`. Signing and publishing stay on Michel's machine through Genie's `scripts/registry_release.py`.
 
 How each vendor is read (all in `VENDORS` in `scripts/model_watch.py`):
 
@@ -27,7 +27,9 @@ How each vendor is read (all in `VENDORS` in `scripts/model_watch.py`):
 
 A "retired" model is one declared in `providers/` that appears nowhere in the vendor's listing (as an id or an alias). A key without access to a model hides it too, so a retirement is a prompt to check, not a fact.
 
-Exit codes of the script: `0` no changes, `3` changes found, `1` error. The workflow opens or updates the pull request only on `3`, and fails visibly on anything else. A vendor that errors keeps its previous worksheet, and the run fails so the error is seen; rerun it from the Actions tab once the vendor recovers.
+Exit codes of the script: `0` no changes, `3` changes found, `1` error. The workflow opens or updates the pull request only on `3`, and fails visibly on anything else. A vendor that errors fails the run, so nothing is pushed and the branch keeps its previous worksheet; rerun it from the Actions tab once the vendor recovers.
+
+**Closing the watch pull request does not silence it.** While `providers/` still differs from what the vendors list, the next weekly run opens a new pull request with the same worksheets. To stop it, resolve the difference in `providers/` (add the models, or remove the retired ones), or remove that vendor's secret so the vendor is skipped.
 
 ## Alternatives rejected
 
@@ -72,7 +74,7 @@ python3 -m unittest discover -s tests -v       # fixtures only, no network, no k
 OPENAI_MODELS_KEY=... python3 scripts/model_watch.py --root .
 ```
 
-The tests use fixtures shaped after each vendor's documented response (`tests/fixtures/`), cover a missing key, hostile ids, retirement, the no-change path, and assert that a sentinel key value never reaches stdout, stderr or any written file.
+The tests use fixtures shaped after each vendor's documented response (`tests/fixtures/`), cover a missing key, a key with a newline sent through the real request path, hostile ids, hostile JSON, retirement, the no-change path, and assert that a sentinel key value never reaches stdout, stderr or any written file. `tests/test_workflow_steps.py` extracts the pull-request job's shell steps from the workflow and runs them against a local bare repository with a stub `gh`: branch creation, a no-op rerun, the force-with-lease race, a human commit, skipped-vendor carry forward, the empty-commit guard and an `ls-remote` failure.
 
 ## References used for the endpoint shapes
 

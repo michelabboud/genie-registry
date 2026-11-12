@@ -2,6 +2,12 @@
 # candidate worksheets under candidates/. It never edits providers/, never
 # signs, never creates a release and never pushes to main.
 # Design, threat sketch and review steps: docs/model-watch.md.
+#
+# Two jobs, so vendor keys and write access never share a job:
+#   watch         read-only token; holds the vendor keys; runs the script and
+#                 uploads candidates/ and the PR body as an artifact.
+#   pull-request  write token; no vendor keys and no vendor-facing code; turns
+#                 the artifact into the model-watch/auto branch and its PR.
 name: model-watch
 
 on:
@@ -9,7 +15,7 @@ on:
     - cron: "23 6 * * 1" # Mondays 06:23 UTC
   workflow_dispatch:
 
-# Nothing at workflow level; the one job asks for exactly what it needs.
+# Nothing at workflow level; each job asks for exactly what it needs.
 permissions: {}
 
 concurrency:
@@ -21,20 +27,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: write # push the model-watch/auto branch
-      pull-requests: write # open, update or close its pull request
-    env:
-      WATCH_BRANCH: model-watch/auto
-      BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      contents: read
+    outputs:
+      result: ${{ steps.watch.outputs.result }}
+      complete: ${{ steps.watch.outputs.complete }}
+      skipped: ${{ steps.watch.outputs.skipped }}
     steps:
       - name: Check out main
         # actions/checkout v7.0.1
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
-          fetch-depth: 0
-          # The token is not left in .git/config, so the step that handles
-          # vendor responses never has push credentials on disk.
           persist-credentials: false
 
       - name: Unit tests
@@ -49,7 +52,7 @@ jobs:
         run: |
           set +e
           python3 scripts/model_watch.py --root . \
-            --pr-body "$RUNNER_TEMP/model-watch-pr.md" \
+            --pr-body "$RUNNER_TEMP/watch-out/pr-body.md" \
             --summary "$GITHUB_STEP_SUMMARY" \
             --github-output "$GITHUB_OUTPUT"
           code=$?
@@ -60,71 +63,151 @@ jobs:
             *) echo "::error::model watch failed (exit $code); see the log above"; exit "$code" ;;
           esac
 
-      - name: Find the watch branch and its pull request
-        id: branch
-        if: steps.watch.outputs.result == 'changes' || steps.watch.outputs.complete == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Stage the worksheets
+        if: steps.watch.outputs.result == 'changes'
         run: |
           set -euo pipefail
-          exists=false
-          foreign=false
-          if git ls-remote --exit-code --heads origin "$WATCH_BRANCH" >/dev/null; then
-            exists=true
-            git fetch --no-tags origin "+refs/heads/$WATCH_BRANCH:refs/remotes/origin/$WATCH_BRANCH"
-            # A human commit on the bot branch is never overwritten or closed.
-            authors=$(git log --format='%ae' "origin/main..origin/$WATCH_BRANCH")
-            if [ -n "$authors" ] && printf '%s\n' "$authors" | grep -Fvxq "$BOT_EMAIL"; then
-              foreign=true
-              echo "::warning::$WATCH_BRANCH carries commits not made by the watch; leaving it untouched"
-              echo "The watch branch has commits by someone other than the watch, so it was left untouched." >> "$GITHUB_STEP_SUMMARY"
-            fi
+          mkdir -p "$RUNNER_TEMP/watch-out/candidates"
+          if [ -d candidates ]; then
+            find candidates -maxdepth 1 -type f -name '*.md' -exec cp -- {} "$RUNNER_TEMP/watch-out/candidates/" \;
           fi
+
+      - name: Upload the worksheets
+        if: steps.watch.outputs.result == 'changes'
+        # actions/upload-artifact v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: model-watch
+          path: ${{ runner.temp }}/watch-out
+          if-no-files-found: error
+          retention-days: 5
+
+  pull-request:
+    needs: watch
+    if: needs.watch.outputs.result == 'changes' || needs.watch.outputs.complete == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the model-watch/auto branch
+      pull-requests: write # open, update or close its pull request
+    env:
+      WATCH_BRANCH: model-watch/auto
+      BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      GH_TOKEN: ${{ github.token }}
+      SKIPPED: ${{ needs.watch.outputs.skipped }}
+    steps:
+      - name: Check out main
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the worksheets
+        if: needs.watch.outputs.result == 'changes'
+        # actions/download-artifact v8.0.2
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: model-watch
+          path: ${{ runner.temp }}/watch-in
+
+      - name: Find the watch branch and its pull request
+        id: branch
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          set +e
+          remote=$(git ls-remote --exit-code --heads origin "refs/heads/$WATCH_BRANCH")
+          rc=$?
+          set -e
+          sha=""
+          foreign=false
+          case "$rc" in
+            0)
+              sha=${remote%%[[:space:]]*}
+              if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "::error::unexpected ls-remote output for $WATCH_BRANCH"; exit 1
+              fi
+              git fetch --no-tags origin "$sha"
+              # A human commit on the bot branch is never overwritten or closed.
+              authors=$(git log --format='%ae' "origin/main..$sha")
+              if [ -n "$authors" ] && printf '%s\n' "$authors" | grep -Fvxq "$BOT_EMAIL"; then
+                foreign=true
+                echo "::warning::$WATCH_BRANCH carries commits not made by the watch; leaving it untouched"
+                echo "The watch branch has commits by someone other than the watch, so it was left untouched." >> "$GITHUB_STEP_SUMMARY"
+              fi
+              ;;
+            2) ;; # the branch does not exist
+            *) echo "::error::git ls-remote failed (exit $rc); not touching $WATCH_BRANCH"; exit 1 ;;
+          esac
           pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$WATCH_BRANCH" --base main --state open \
                  --json number --jq '.[0].number // empty')
           {
-            echo "exists=$exists"
+            echo "sha=$sha"
             echo "foreign=$foreign"
             echo "pr=$pr"
           } >> "$GITHUB_OUTPUT"
 
       - name: Open or update the pull request
-        if: steps.watch.outputs.result == 'changes' && steps.branch.outputs.foreign == 'false'
+        if: needs.watch.outputs.result == 'changes' && steps.branch.outputs.foreign == 'false'
         env:
-          GH_TOKEN: ${{ github.token }}
-          EXISTS: ${{ steps.branch.outputs.exists }}
+          SHA: ${{ steps.branch.outputs.sha }}
           PR: ${{ steps.branch.outputs.pr }}
         run: |
           set -euo pipefail
+          in="$RUNNER_TEMP/watch-in"
+          body="$RUNNER_TEMP/pr-body.md"
+          cp -- "$in/pr-body.md" "$body"
           git config user.name "github-actions[bot]"
           git config user.email "$BOT_EMAIL"
-          gh auth setup-git
           git checkout -B "$WATCH_BRANCH"
+          # candidates/ becomes exactly what the watch produced, admitting only
+          # the known vendor worksheet names from the artifact.
+          git rm -r -q --ignore-unmatch -- candidates
+          mkdir -p candidates
+          for vendor in openai xai gemini; do
+            src="$in/candidates/$vendor.md"
+            if [ -f "$src" ] && [ ! -L "$src" ]; then cp -- "$src" "candidates/$vendor.md"; fi
+          done
+          # A skipped vendor (its secret absent) keeps the worksheet the branch
+          # already had: no fresh evidence replaces it.
+          for vendor in $SKIPPED; do
+            case "$vendor" in openai|xai|gemini) ;; *) echo "::error::unexpected vendor name"; exit 1 ;; esac
+            if [ -n "$SHA" ] && git cat-file -e "$SHA:candidates/$vendor.md" 2>/dev/null; then
+              git show "$SHA:candidates/$vendor.md" > "candidates/$vendor.md"
+              printf '\nCarried forward unchanged (vendor skipped this run): %s\n' "\`candidates/$vendor.md\`" >> "$body"
+            fi
+          done
           git add -A -- candidates
-          git commit -m "candidates: weekly model watch $(date -u +%F)" \
+          if git diff --cached --quiet -- candidates; then
+            echo "::warning::main already holds these exact worksheets; delete candidates/ on main after verifying them (docs/model-watch.md)"
+            exit 0
+          fi
+          git commit -q -m "candidates: weekly model watch $(date -u +%F)" \
                      -m "Unverified worksheets only; providers/ is not modified."
-          if [ "$EXISTS" = true ] && git diff --quiet "origin/$WATCH_BRANCH" HEAD -- candidates; then
+          if [ -n "$SHA" ] && git diff --quiet "$SHA" HEAD -- candidates; then
             echo "Candidates unchanged since the last run; branch not pushed."
           else
             # The watch owns this branch and regenerates it from main every run.
-            git push --force origin "HEAD:refs/heads/$WATCH_BRANCH"
+            # The lease refuses the push if anyone moved the branch since it was
+            # read (an empty expected value means it must still be absent).
+            git push --force-with-lease="refs/heads/$WATCH_BRANCH:$SHA" origin "HEAD:refs/heads/$WATCH_BRANCH"
           fi
           if [ -n "$PR" ]; then
-            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/model-watch-pr.md"
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$body"
             echo "Updated pull request #$PR." >> "$GITHUB_STEP_SUMMARY"
           elif ! gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$WATCH_BRANCH" \
-                 --title "Model watch: vendor model changes to verify" \
-                 --body-file "$RUNNER_TEMP/model-watch-pr.md"; then
+                 --title "Model watch: vendor model changes to verify" --body-file "$body"; then
             echo "::error::Pull request creation was refused. Enable Settings > Actions > General > 'Allow GitHub Actions to create and approve pull requests' (docs/model-watch.md). The branch $WATCH_BRANCH was pushed."
             exit 1
           fi
 
       - name: Close a pull request that no longer applies
         if: >-
-          steps.watch.outputs.result == 'none' && steps.watch.outputs.complete == 'true'
+          needs.watch.outputs.result == 'none' && needs.watch.outputs.complete == 'true'
           && steps.branch.outputs.foreign == 'false' && steps.branch.outputs.pr != ''
         env:
-          GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.branch.outputs.pr }}
         run: |
           set -euo pipefail
