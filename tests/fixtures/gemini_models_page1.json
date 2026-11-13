@@ -1,0 +1,26 @@
+{
+  "models": [
+    {
+      "name": "models/gemini-3.1-flash-image",
+      "baseModelId": "gemini-3.1-flash-image",
+      "version": "3.1",
+      "displayName": "Gemini 3.1 Flash Image",
+      "inputTokenLimit": 65536,
+      "outputTokenLimit": 32768,
+      "supportedGenerationMethods": ["generateContent", "countTokens"]
+    },
+    {
+      "name": "models/gemini-3.5-pro",
+      "baseModelId": "gemini-3.5-pro",
+      "version": "3.5",
+      "supportedGenerationMethods": ["generateContent", "countTokens"]
+    },
+    {
+      "name": "models/imagen-5.0-generate",
+      "baseModelId": "imagen-5.0-generate",
+      "version": "5.0",
+      "supportedGenerationMethods": ["predict"]
+    }
+  ],
+  "nextPageToken": "Cg5wYWdlLXR3by10b2tlbg=="
+}

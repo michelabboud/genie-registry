@@ -1,0 +1,39 @@
+{
+  "models": [
+    {
+      "id": "grok-imagine-image-2.0",
+      "fingerprint": "fp_0123456789",
+      "created": 1770000000,
+      "object": "model",
+      "owned_by": "xai",
+      "version": "2.0",
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["image"],
+      "image_price": 200,
+      "max_prompt_length": 1024,
+      "aliases": ["grok-imagine-image"]
+    },
+    {
+      "id": "grok-imagine-image-3.0",
+      "fingerprint": "fp_abcdef",
+      "created": 1790000000,
+      "object": "model",
+      "owned_by": "xai",
+      "version": "3.0",
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["image"],
+      "image_price": 300,
+      "max_prompt_length": 1024,
+      "aliases": []
+    },
+    {
+      "id": "grok-imagine-video-1.0",
+      "created": 1790000000,
+      "object": "model",
+      "owned_by": "xai",
+      "input_modalities": ["text"],
+      "output_modalities": ["video"],
+      "aliases": []
+    }
+  ]
+}
