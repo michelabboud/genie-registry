@@ -1,0 +1,185 @@
+# Price inputs for genie's run-summary estimates (ADR 0141). Every figure
+# genie prints from this file is labelled an estimate, never a bill.
+#
+# A route is priced only when a vendor's own pages state the price; anything
+# else prints "est. unavailable". Each entry names its sources and the date
+# they were checked. Amounts are USD decimal strings, parsed exactly.
+#
+# Matching: the provider's endpoint host, the operation and the exact model
+# id. A copy pointed at another host (a proxy, a local server) is never
+# priced as the vendor.
+#
+# Kinds:
+#   openai-image-tokens  OpenAI GPT Image output tokens from the published
+#                        cost-calculator formula (grid per quality, optional
+#                        scale in tenths), times the output token rate. The
+#                        prompt's text tokens are billed on top and are not
+#                        in the estimate; the provider-reported cost after the
+#                        run includes them.
+#   per-image            a fixed price per image, keyed by "SIZE/QUALITY" or
+#                        by the resolution label genie sends.
+#   per-request          a fixed price per request.
+#
+# plus_prompt = true: the vendor also bills the prompt's tokens (text input,
+# and for Gemini text and thinking output), unknown before sending and not in
+# the amount; the summary says "+ prompt tokens".
+
+schema_version = 2
+
+# The day this table as a whole was last reviewed (schema 2, ADR 0157). Move
+# it forward whenever the table is reviewed, even when no figure changed; a
+# registry price table replaces this one only when its date is later.
+date = "2026-11-09"
+
+# Checked 2026-11-09, quoted exactly:
+# - Pricing page, "Image tokens", Standard: "| gpt-image-2.6-sunburst | Image |
+#   $8.00 | $30.00 | $2.00 |", "| gpt-image-2.6-sunburst | Text | $5.00 | - |
+#   $1.25 |", and the same two rows for gpt-image-2.6-flare.
+# - Image generation guide, "GPT Image 2.6 costs": "Image output costs $30 per
+#   million billable tokens." "Calculating costs": "The models can use
+#   different token counts for the same quality setting and share the same
+#   price per image output token."
+# - The guide's calculator (GptImageTokenCalculator) has one "gpt-image-2.6"
+#   family for both models: grid "{low:16,medium:24,high:48,xhigh:64,max:96}",
+#   scale "{low:4.2,medium:3.3,high:1,xhigh:1,max:1}", applied as
+#   "return e===`gpt-image-2.6`?Math.round(p*c[r]):p". It does not tell Flare
+#   and Sunburst apart, so neither does this table.
+[[prices]]
+host = "api.openai.com"
+operation = "image-generation"
+models = ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"]
+kind = "openai-image-tokens"
+plus_prompt = true
+grid = { low = 16, medium = 24, high = 48, xhigh = 64, max = 96 }
+scale_tenths = { low = 42, medium = 33, high = 10, xhigh = 10, max = 10 }
+text_input_usd_per_million = "5.00"
+image_output_usd_per_million = "30.00"
+sources = [
+  "https://developers.openai.com/api/docs/pricing",
+  "https://developers.openai.com/api/docs/guides/image-generation#calculating-costs",
+]
+checked = "2026-11-09"
+
+[[prices]]
+host = "api.openai.com"
+operation = "image-generation"
+models = ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]
+kind = "openai-image-tokens"
+plus_prompt = true
+grid = { low = 16, medium = 24, high = 48, xhigh = 64, max = 96 }
+text_input_usd_per_million = "5.00"
+image_output_usd_per_million = "30.00"
+sources = [
+  "https://developers.openai.com/api/docs/pricing",
+  "https://developers.openai.com/api/docs/guides/image-generation#calculating-costs",
+]
+checked = "2026-11-09"
+
+[[prices]]
+host = "api.openai.com"
+operation = "image-generation"
+models = ["gpt-image-2"]
+kind = "openai-image-tokens"
+plus_prompt = true
+grid = { low = 16, medium = 48, high = 96 }
+text_input_usd_per_million = "5.00"
+image_output_usd_per_million = "30.00"
+sources = [
+  "https://developers.openai.com/api/docs/pricing",
+  "https://developers.openai.com/api/docs/guides/image-generation#calculating-costs",
+]
+checked = "2026-11-09"
+
+# The guide's legacy per-image output table; text input is billed on top.
+[[prices]]
+host = "api.openai.com"
+operation = "image-generation"
+models = ["gpt-image-1.5"]
+kind = "per-image"
+plus_prompt = true
+by = "size-quality"
+sources = ["https://developers.openai.com/api/docs/guides/image-generation#historical-output-costs"]
+checked = "2026-11-09"
+[prices.per_image]
+"1024x1024/low" = "0.009"
+"1024x1536/low" = "0.013"
+"1536x1024/low" = "0.013"
+"1024x1024/medium" = "0.034"
+"1024x1536/medium" = "0.05"
+"1536x1024/medium" = "0.05"
+"1024x1024/high" = "0.133"
+"1024x1536/high" = "0.2"
+"1536x1024/high" = "0.2"
+
+[[prices]]
+host = "api.openai.com"
+operation = "image-generation"
+models = ["gpt-image-1-mini"]
+kind = "per-image"
+plus_prompt = true
+by = "size-quality"
+sources = ["https://developers.openai.com/api/docs/guides/image-generation#historical-output-costs"]
+checked = "2026-11-09"
+[prices.per_image]
+"1024x1024/low" = "0.005"
+"1024x1536/low" = "0.006"
+"1536x1024/low" = "0.006"
+"1024x1024/medium" = "0.011"
+"1024x1536/medium" = "0.015"
+"1536x1024/medium" = "0.015"
+"1024x1024/high" = "0.036"
+"1024x1536/high" = "0.052"
+"1536x1024/high" = "0.052"
+
+# Paid tier, standard (not batch). Google prices genie's "512" label as a
+# "0.5K" image. The free tier has no image output.
+[[prices]]
+host = "generativelanguage.googleapis.com"
+operation = "image-generation"
+models = ["gemini-3.1-flash-image"]
+kind = "per-image"
+plus_prompt = true
+by = "resolution"
+sources = ["https://ai.google.dev/gemini-api/docs/pricing"]
+checked = "2026-11-09"
+[prices.per_image]
+"512" = "0.045"
+"1K" = "0.067"
+"2K" = "0.101"
+"4K" = "0.151"
+
+[[prices]]
+host = "generativelanguage.googleapis.com"
+operation = "image-generation"
+models = ["gemini-3-pro-image"]
+kind = "per-image"
+plus_prompt = true
+by = "resolution"
+sources = ["https://ai.google.dev/gemini-api/docs/pricing"]
+checked = "2026-11-09"
+[prices.per_image]
+"1K" = "0.134"
+"2K" = "0.134"
+"4K" = "0.24"
+
+[[prices]]
+host = "generativelanguage.googleapis.com"
+operation = "image-generation"
+models = ["gemini-3.1-flash-lite-image"]
+kind = "per-image"
+plus_prompt = true
+by = "resolution"
+sources = ["https://ai.google.dev/gemini-api/docs/pricing"]
+checked = "2026-11-09"
+[prices.per_image]
+"1K" = "0.0336"
+
+# "The moderation endpoint is free to use."
+[[prices]]
+host = "api.openai.com"
+operation = "content-scoring"
+models = ["omni-moderation-2024-09-26"]
+kind = "per-request"
+per_request = "0"
+sources = ["https://developers.openai.com/api/docs/guides/moderation"]
+checked = "2026-11-09"

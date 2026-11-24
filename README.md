@@ -11,3 +11,26 @@ Production public key: `603d9f069ae7344d58a74f494f5dd64cf03c4fba0632684d6486b063
 ## Model watch
 
 A weekly workflow lists each vendor's models and, when they differ from `providers/`, opens one pull request with unverified worksheets under `candidates/`. It never edits `providers/`, never signs and never publishes; a human verifies every value and publishes locally. The design, threat sketch, the secrets to create and the review and publish steps are in [docs/model-watch.md](docs/model-watch.md).
+
+## Price estimates
+
+`prices/prices.toml` seeds the registry's schema-2 price table from Genie's
+embedded `crates/genie-app/data/prices.toml` (Genie 0.4.6). The initial copy is
+byte-for-byte identical, including its existing source comments, dates and
+source URLs. Every figure is a dated estimate, never a bill. Price entries match
+an exact vendor host, operation and model ID.
+
+The model-watch pull request includes **Price pages to recheck** when an entry
+was checked more than 90 days before the UTC run date, or a newly listed image
+model has no price entry. It links each stale entry's recorded sources and each
+unpriced model's official vendor pricing page. Price warnings alone never open
+a pull request; a human checks the sources and edits the table. The watch never
+fetches prices, edits the table, signs or publishes it. Prices are intended for
+the separately signed format-2 registry assets; existing format-1 assets remain
+providers and profiles only. See [the model-watch guide](docs/model-watch.md).
+
+Offline watch tests (Python 3.11+, standard library only):
+
+```sh
+python3 -m unittest discover -s tests -v
+```
