@@ -35,6 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, TypeGuard
 
@@ -66,6 +67,9 @@ DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 USER_AGENT = "genie-registry-model-watch/1"
 DESCRIPTION = "Weekly vendor model watch for the Genie provider registry."
 TO_VERIFY = "TO VERIFY"
+# Match Genie's estimate-staleness policy (ADR 0157). Exactly 90 days is fresh.
+PRICE_STALE_AFTER_DAYS = 90
+PRICE_FILE = "prices/prices.toml"
 
 
 class WatchError(Exception):
@@ -92,6 +96,7 @@ class Vendor:
     patterns: tuple[str, ...]
     doc_urls: tuple[str, ...]
     model_doc_template: str | None
+    price_urls: tuple[str, ...]
     key_advice: str
 
 
@@ -113,6 +118,7 @@ VENDORS: tuple[Vendor, ...] = (
             "https://platform.openai.com/docs/api-reference/images/create",
         ),
         model_doc_template="https://platform.openai.com/docs/models/{id}",
+        price_urls=("https://developers.openai.com/api/docs/pricing",),
         key_advice="a restricted key with only Models: Read",
     ),
     Vendor(
@@ -130,6 +136,7 @@ VENDORS: tuple[Vendor, ...] = (
             "https://docs.x.ai/developers/rest-api-reference/inference/models",
         ),
         model_doc_template=None,
+        price_urls=("https://docs.x.ai/developers/models",),
         key_advice="a key on a team with a low spending cap",
     ),
     Vendor(
@@ -149,6 +156,7 @@ VENDORS: tuple[Vendor, ...] = (
             "https://ai.google.dev/gemini-api/docs/models",
         ),
         model_doc_template=None,
+        price_urls=("https://ai.google.dev/gemini-api/docs/pricing",),
         key_advice="a key on a project with a low spending cap",
     ),
 )
@@ -177,6 +185,8 @@ class VendorResult:
     shutdown: dict[str, str] = field(default_factory=dict)
     dropped: int = 0
     overflow: int = 0
+    # The worksheet cap does not hide models that need a price review.
+    all_added: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
@@ -398,6 +408,7 @@ def check_vendor(root: Path, vendor: Vendor, env: dict, transport: Transport) ->
         vendor,
         "checked",
         added=added[:MAX_CANDIDATES_PER_VENDOR],
+        all_added=added,
         retired=sorted(registry_ids - listing.all_ids),
         unchanged=sorted(registry_ids & listing.all_ids),
         shutdown={i: d for i, d in listing.shutdown_dates.items() if i in registry_ids},
@@ -558,7 +569,88 @@ def report(results: Iterable[VendorResult]) -> str:
     return "\n".join(rows + ([""] + notes if notes else []))
 
 
-def pr_body(results: list[VendorResult]) -> str:
+@dataclass(frozen=True)
+class PriceEntry:
+    """Only the reviewed price metadata used by the watch, never amounts."""
+
+    host: str
+    operation: str
+    models: tuple[str, ...]
+    sources: tuple[str, ...]
+    checked: date
+
+
+def load_prices(root: Path) -> list[PriceEntry]:
+    """Read review metadata; the publisher still validates the full price schema.
+
+    Parse failures never echo TOML contents, just as vendor JSON failures
+    never echo their response bodies.
+    """
+    try:
+        with (root / PRICE_FILE).open("rb") as handle:
+            document = tomllib.load(handle)
+    except OSError:
+        raise WatchError(f"{PRICE_FILE} is missing or unreadable") from None
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        raise WatchError(f"{PRICE_FILE} is not valid TOML") from None
+    try:
+        if document["schema_version"] != 2 or not isinstance(document["prices"], list):
+            raise ValueError
+        entries = []
+        for row in document["prices"]:
+            host, operation = row["host"], row["operation"]
+            models, sources, checked = row["models"], row["sources"], row["checked"]
+            if not isinstance(host, str) or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", host):
+                raise ValueError
+            if not valid_model_id(operation):
+                raise ValueError
+            if not isinstance(models, list) or not models or not all(valid_model_id(m) for m in models):
+                raise ValueError
+            if not isinstance(sources, list) or not sources:
+                raise ValueError
+            for source in sources:
+                if not isinstance(source, str) or any(c.isspace() or c in "<>`" for c in source):
+                    raise ValueError
+                url = urllib.parse.urlsplit(source)
+                if url.scheme != "https" or not url.hostname or url.username or url.password:
+                    raise ValueError
+            if not isinstance(checked, str) or not DATE_RE.fullmatch(checked):
+                raise ValueError
+            entries.append(PriceEntry(host, operation, tuple(models), tuple(sources), date.fromisoformat(checked)))
+        return entries
+    except (KeyError, TypeError, ValueError):
+        raise WatchError(f"{PRICE_FILE} has invalid price review metadata") from None
+
+
+def price_rechecks(root: Path, results: list[VendorResult], today: date) -> list[str]:
+    """Flag every stale entry and every new image model without a vendor price.
+
+    Listing model ids have already passed the vendor parser's grammar; URLs
+    for unpriced models are policy constants, never vendor response fields.
+    """
+    entries = load_prices(root)
+    priced = {(e.host, e.operation, model) for e in entries for model in e.models}
+    lines = []
+    for entry in entries:
+        if (today - entry.checked).days > PRICE_STALE_AFTER_DAYS:
+            models = ", ".join(f"`{model}`" for model in entry.models)
+            sources = ", ".join(f"<{source}>" for source in entry.sources)
+            lines.append(
+                f"- {models} (`{entry.host}`, `{entry.operation}`): price checked "
+                f"{entry.checked.isoformat()}, more than {PRICE_STALE_AFTER_DAYS} days ago. Sources: {sources}"
+            )
+    for result in results:
+        if result.status != "checked":
+            continue
+        host = urllib.parse.urlsplit(result.vendor.list_url).hostname
+        for model in result.all_added:
+            if (host, "image-generation", model) not in priced:
+                sources = ", ".join(f"<{url}>" for url in result.vendor.price_urls)
+                lines.append(f"- {result.vendor.display} `{model}`: no price entry. Sources: {sources}")
+    return lines
+
+
+def pr_body(results: list[VendorResult], price_flags: list[str] | None = None) -> str:
     changed = [r for r in results if r.changed]
     lines = [
         "Automated weekly model watch. **Unverified:** every proposed value is marked",
@@ -580,6 +672,10 @@ def pr_body(results: list[VendorResult]) -> str:
         "Do not push your own commits to `model-watch/auto`: the watch regenerates it.",
         "Branch from it instead; the watch then leaves the branch alone.",
     ]
+    if price_flags:
+        lines += ["", "## Price pages to recheck", "",
+                  "Human review only: check these pages and update `prices/prices.toml` by hand.",
+                  "", *price_flags]
     return "\n".join(lines) + "\n"
 
 
@@ -606,7 +702,10 @@ def write_candidates(root: Path, results: list[VendorResult]) -> list[Path]:
     return written
 
 
-def run(argv: list[str], env: dict | None = None, transport: Transport = fetch_json) -> int:
+def run(
+    argv: list[str], env: dict | None = None, transport: Transport = fetch_json,
+    *, today: date | None = None,
+) -> int:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--pr-body", type=Path, help="write the pull request body here")
@@ -614,6 +713,7 @@ def run(argv: list[str], env: dict | None = None, transport: Transport = fetch_j
     parser.add_argument("--github-output", type=Path, help="append step outputs here")
     args = parser.parse_args(argv)
     env = dict(os.environ) if env is None else env
+    run_date = today if today is not None else datetime.now(timezone.utc).date()
 
     results = [check_vendor(args.root, vendor, env, transport) for vendor in VENDORS]
     try:
@@ -631,7 +731,12 @@ def run(argv: list[str], env: dict | None = None, transport: Transport = fetch_j
     changed = any(r.changed for r in results)
     complete = all(r.status == "checked" for r in results)
     if args.pr_body and changed:
-        args.pr_body.write_text(pr_body(results), encoding="utf-8")
+        try:
+            flags = price_rechecks(args.root, results, run_date)
+        except WatchError as error:
+            print(f"model-watch: {error}", file=sys.stderr)
+            return EXIT_ERROR
+        args.pr_body.write_text(pr_body(results, flags), encoding="utf-8")
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as handle:
             handle.write(f"complete={'true' if complete else 'false'}\n")

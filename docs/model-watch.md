@@ -31,6 +31,43 @@ Exit codes of the script: `0` no changes, `3` changes found, `1` error. The work
 
 **Closing the watch pull request does not silence it.** While `providers/` still differs from what the vendors list, the next weekly run opens a new pull request with the same worksheets. To stop it, resolve the difference in `providers/` (add the models, or remove the retired ones), or remove that vendor's secret so the vendor is skipped.
 
+## Price pages to recheck
+
+The repository's `prices/prices.toml` starts as an exact copy of Genie's embedded
+schema-2 table (`crates/genie-app/data/prices.toml`, Genie 0.4.6), including its
+existing source comments. Schema 2 carries the table's review `date`; each
+`[[prices]]` entry carries its own `checked` date and `sources`. Genie's publisher
+validates the full price schema before prices enter the separately signed
+format-2 assets. The watch reads review metadata only; it does not calculate or
+validate amounts and does not change the signed-registry format.
+
+When model changes already warrant a pull request, its body gains **Price pages
+to recheck** if either condition holds:
+
+- A price entry's `checked` date is more than 90 days before the UTC run date
+  (`PRICE_STALE_AFTER_DAYS`). Exactly 90 days is still fresh. Each flagged entry
+  lists all its models, host, operation, checked date and recorded source URLs,
+  including entries for vendors whose model checks were skipped.
+- A newly listed image model has no price entry for that vendor host and the
+  `image-generation` operation. Its official vendor pricing page is linked.
+  All validated additions are checked, including those beyond the 64-model
+  worksheet cap; the existing worksheet cap remains unchanged.
+
+A fresh table covering all new models produces no section. Price flags alone
+never change the exit code, create a worksheet, open a pull request or prevent
+the normal no-change handling. Price metadata is read only when a body for model
+changes is requested. A missing, malformed or invalid metadata file fails that
+run with a message naming the file, never its contents. The URLs for new models
+are constants in `VENDORS`, not fields taken from a vendor response. The watch
+makes no requests to pricing pages and never edits the price table.
+
+During review, open each linked source, check the prices manually, update the
+relevant entry's `checked` date and advance the table's `date` when reviewing it,
+even if no amount changes. Add a new price entry only when the vendor publishes
+a price for that exact model and operation. An unavailable price stays
+unavailable; do not copy a sibling model's amount as a verified price. Signing
+and publishing remain a separate local step through Genie's publisher.
+
 ## Alternatives rejected
 
 - **Signing in CI.** It would put the production key, the one thing every Genie user trusts, in a hosted runner reachable by any workflow change or compromised action. A weekly publish is not worth that. The registry's whole trust model is that the key stays in Michel's custody.
@@ -74,7 +111,13 @@ python3 -m unittest discover -s tests -v       # fixtures only, no network, no k
 OPENAI_MODELS_KEY=... python3 scripts/model_watch.py --root .
 ```
 
-The tests use fixtures shaped after each vendor's documented response (`tests/fixtures/`), cover a missing key, a key with a newline sent through the real request path, hostile ids, hostile JSON, retirement, the no-change path, and assert that a sentinel key value never reaches stdout, stderr or any written file. `tests/test_workflow_steps.py` extracts the pull-request job's shell steps from the workflow and runs them against a local bare repository with a stub `gh`: branch creation, a no-op rerun, the force-with-lease race, a human commit, skipped-vendor carry forward, the empty-commit guard and an `ls-remote` failure.
+To run just the watch tests without the workflow shell-step simulation, use
+`python3 -m unittest discover -s tests -p test_model_watch.py -v`.
+
+The tests use fixtures shaped after each vendor's documented response (`tests/fixtures/`), cover a missing key, a key with a newline sent through the real request path, hostile ids, hostile JSON, retirement, the no-change path, and assert that a sentinel key value never reaches stdout, stderr or any written file. Price fixtures cover stale entries plus unpriced new models and their URLs, the
+90-day boundary, fresh tables, host and operation matching, skipped vendors,
+worksheet overflow, sanitized metadata errors and unchanged no-change behavior.
+`tests/test_workflow_steps.py` extracts the pull-request job's shell steps from the workflow and runs them against a local bare repository with a stub `gh`: branch creation, a no-op rerun, the force-with-lease race, a human commit, skipped-vendor carry forward, the empty-commit guard and an `ls-remote` failure.
 
 ## References used for the endpoint shapes
 

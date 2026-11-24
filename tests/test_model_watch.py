@@ -8,6 +8,7 @@ captured from live accounts.
 from __future__ import annotations
 
 import contextlib
+from datetime import date
 import email.message
 import importlib.util
 import io
@@ -159,6 +160,11 @@ class WatchCase(unittest.TestCase):
         (providers / "openai.toml").write_text(OPENAI_TOML, encoding="utf-8")
         (providers / "xai.toml").write_text(XAI_TOML, encoding="utf-8")
         (providers / "gemini.toml").write_text(GEMINI_TOML, encoding="utf-8")
+        prices = self.tmp / "prices"
+        prices.mkdir()
+        (prices / "prices.toml").write_text(
+            'schema_version = 2\ndate = "2026-11-24"\nprices = []\n', encoding="utf-8"
+        )
 
     def run_watch(self, env: dict, routes: dict | None = None):
         transport = FakeTransport(default_routes() if routes is None else routes)
@@ -173,7 +179,7 @@ class WatchCase(unittest.TestCase):
             "--github-output", str(output),
         ]
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = mw.run(argv, env=env, transport=transport)
+            code = mw.run(argv, env=env, transport=transport, today=date(2026, 11, 24))
         return code, stdout.getvalue(), stderr.getvalue(), transport
 
     def candidate(self, vendor: str) -> str:
@@ -369,6 +375,137 @@ class ChangeDetection(WatchCase):
         self.run_watch(ALL_KEYS)
         after = {p.name: p.read_bytes() for p in (self.tmp / "providers").iterdir()}
         self.assertEqual(before, after)
+
+
+class PriceFlags(WatchCase):
+    matching_routes = ChangeDetection.matching_routes
+
+    def write_prices(self, entries: list[dict[str, object]]):
+        lines = ['schema_version = 2', 'date = "2026-11-24"']
+        for entry in entries:
+            lines.append("[[prices]]")
+            lines.extend(f"{key} = {json.dumps(value)}" for key, value in entry.items())
+        (self.tmp / "prices" / "prices.toml").write_text("\n".join(lines) + "\n")
+
+    def entry(self, models=None, checked="2026-11-24", **overrides):
+        return {
+            "host": "api.openai.com",
+            "operation": "image-generation",
+            "models": ["gpt-image-2"] if models is None else models,
+            "kind": "per-request",
+            "per_request": "0.10",
+            "sources": ["https://prices.example/pricing", "https://prices.example/image-costs"],
+            "checked": checked,
+            **overrides,
+        }
+
+    def changed_routes(self):
+        routes = self.matching_routes()
+        routes[mw.VENDORS[0].list_url]["data"].append({"id": "gpt-image-3"})
+        return routes
+
+    def body(self):
+        return (self.tmp / "pr-body.md").read_text()
+
+    def price_section(self):
+        self.assertIn("## Price pages to recheck\n", self.body())
+        return self.body().split("## Price pages to recheck\n", 1)[1]
+
+    def test_stale_entry_and_new_unpriced_model_listed_with_source_urls(self):
+        self.write_prices([self.entry(checked="2026-08-25")])  # 91 days
+        code, _, _, _ = self.run_watch(ALL_KEYS, self.changed_routes())
+        self.assertEqual(code, mw.EXIT_CHANGES)
+        section = self.price_section()
+        self.assertIn("`gpt-image-2`", section)
+        self.assertIn("2026-08-25", section)
+        self.assertIn("https://prices.example/pricing", section)
+        self.assertIn("https://prices.example/image-costs", section)
+        self.assertIn("`gpt-image-3`", section)
+        self.assertIn("no price entry", section)
+        self.assertIn("https://developers.openai.com/api/docs/pricing", section)
+        self.assertNotIn("`gpt-image-1`", section)
+
+    def test_fresh_table_with_priced_new_model_has_no_section(self):
+        self.write_prices([self.entry(models=["gpt-image-2", "gpt-image-3"])])
+        code, _, _, _ = self.run_watch(ALL_KEYS, self.changed_routes())
+        self.assertEqual(code, mw.EXIT_CHANGES)
+        self.assertNotIn("## Price pages to recheck", self.body())
+
+    def test_exactly_ninety_days_and_future_dates_are_fresh(self):
+        for checked in ("2026-08-26", "2026-08-27", "2026-11-25"):
+            with self.subTest(checked=checked):
+                self.write_prices([self.entry(models=["gpt-image-3"], checked=checked)])
+                code, _, _, _ = self.run_watch(ALL_KEYS, self.changed_routes())
+                self.assertEqual(code, mw.EXIT_CHANGES)
+                self.assertNotIn("## Price pages to recheck", self.body())
+
+    def test_stale_entries_alone_do_not_change_no_change_path(self):
+        self.write_prices([self.entry(checked="2026-01-01")])
+        code, out, _, _ = self.run_watch(ALL_KEYS, self.matching_routes())
+        self.assertEqual(code, mw.EXIT_NO_CHANGES)
+        self.assertFalse((self.tmp / "pr-body.md").exists())
+        self.assertFalse((self.tmp / "candidates").exists())
+        self.assertNotIn("Price pages to recheck", out)
+
+    def test_stale_entries_from_skipped_vendor_ride_on_retirement_pr(self):
+        self.write_prices([self.entry(models=["gpt-image-2", "gpt-image-1"], checked="2026-01-01")])
+        routes = self.matching_routes()
+        routes[mw.VENDORS[1].list_url] = {"models": []}
+        code, _, _, _ = self.run_watch({"XAI_MODELS_KEY": "k"}, routes)
+        self.assertEqual(code, mw.EXIT_CHANGES)
+        section = self.price_section()
+        self.assertIn("`gpt-image-2`", section)
+        self.assertIn("`gpt-image-1`", section)
+        self.assertIn("https://prices.example/pricing", section)
+
+    def test_price_match_requires_vendor_host_and_operation(self):
+        for overrides in ({"host": "other.example"}, {"operation": "content-scoring"}):
+            with self.subTest(overrides=overrides):
+                self.write_prices([self.entry(models=["gpt-image-3"], **overrides)])
+                self.run_watch(ALL_KEYS, self.changed_routes())
+                self.assertIn("`gpt-image-3`", self.price_section())
+
+    def test_unpriced_new_models_from_each_vendor_have_pricing_urls(self):
+        self.run_watch(ALL_KEYS)
+        section = self.price_section()
+        for model, url in (
+            ("gpt-image-3", "https://developers.openai.com/api/docs/pricing"),
+            ("grok-imagine-image-3.0", "https://docs.x.ai/developers/models"),
+            ("gemini-3.5-flash-image", "https://ai.google.dev/gemini-api/docs/pricing"),
+        ):
+            self.assertIn(f"`{model}`", section)
+            self.assertIn(url, section)
+
+    def test_new_model_beyond_worksheet_cap_is_still_flagged(self):
+        models = [f"gpt-image-new-{i:04d}" for i in range(mw.MAX_CANDIDATES_PER_VENDOR + 1)]
+        routes = self.matching_routes()
+        routes[mw.VENDORS[0].list_url]["data"].extend({"id": model} for model in models)
+        self.run_watch(ALL_KEYS, routes)
+        self.assertIn(f"`{models[-1]}`", self.price_section())
+        self.assertNotIn(f'[models."{models[-1]}"]', self.candidate("openai"))
+
+    def test_no_change_does_not_require_price_metadata(self):
+        (self.tmp / "prices" / "prices.toml").write_text("invalid TOML [")
+        code, _, _, _ = self.run_watch(ALL_KEYS, self.matching_routes())
+        self.assertEqual(code, mw.EXIT_NO_CHANGES)
+        self.assertFalse((self.tmp / "pr-body.md").exists())
+
+    def test_repository_price_metadata_loads(self):
+        entries = mw.load_prices(REPO)
+        self.assertTrue(entries)
+        self.assertTrue(all(entry.sources for entry in entries))
+        self.assertIn("omni-moderation-2024-09-26", {m for e in entries for m in e.models})
+
+    def test_price_input_errors_do_not_echo_file_contents(self):
+        for text in ('checked = "PRIVATE-PRICE-MARKER',
+                     'schema_version = 2\nprices = [{ checked = "PRIVATE-PRICE-MARKER" }]'):
+            with self.subTest(text=text):
+                (self.tmp / "prices" / "prices.toml").write_text(text)
+                code, out, err, _ = self.run_watch(ALL_KEYS, self.changed_routes())
+                self.assertEqual(code, mw.EXIT_ERROR)
+                self.assertIn("prices/prices.toml", err)
+                self.assertNotIn("PRIVATE-PRICE-MARKER", out + err)
+                self.assertFalse((self.tmp / "pr-body.md").exists())
 
 
 class CandidateBlocks(WatchCase):
